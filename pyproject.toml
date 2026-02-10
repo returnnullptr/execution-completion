@@ -1,0 +1,35 @@
+[project]
+name = "runa"
+version = "0.1.0"
+description = "Domain logic isolation research"
+readme = "README.md"
+authors = [
+  {name = "Yuriy Kehter", email = "yuriy.kehter@gmail.com"},
+]
+requires-python = ">=3.14.3"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-dotenv>=0.5.2",
+]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+env_override_existing_values = 1
+env_files = [".env.test"]
+
+[tool.uv.build-backend]
+module-root = "src"
+namespace = true
