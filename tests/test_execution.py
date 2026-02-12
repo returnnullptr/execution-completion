@@ -9,6 +9,7 @@ from runa.execution import (
     ResponseSent,
     CreateEntityRequestSent,
     CreateEntityResponseReceived,
+    EntityRequestSent,
 )
 
 
@@ -37,6 +38,9 @@ class User(Entity[UserState]):
     def add_pet(self, name: str) -> None:
         self.pets.append(Pet(name, owner=self))
 
+    def rename_pet(self, pet: Pet, new_name: str) -> None:
+        pet.change_name(self, new_name)
+
 
 @dataclass
 class PetState:
@@ -53,6 +57,12 @@ class Pet(Entity[PetState]):
 
     def __setstate__(self, state: PetState) -> None:
         self.name = state.name
+
+    def change_name(self, user: User, new_name: str) -> bool:
+        if self.owner is user:
+            self.name = new_name
+            return True
+        return False
 
 
 def test_initialize_request_received() -> None:
@@ -239,5 +249,45 @@ def test_create_entity_response_received() -> None:
         StateChanged(
             id=result.context[5].id,
             state=UserState("Yuriy", [pet]),
+        ),
+    ]
+
+
+def test_entity_request_sent() -> None:
+    user = Runa(User)
+    pet = Pet("my_cat", owner=user.entity)
+    result = user.execute(
+        context=[
+            StateChanged(
+                id="state-changed-1",
+                state=UserState("Yuriy", [pet]),
+            ),
+            RequestReceived(
+                id="request-1",
+                method_name="rename_pet",
+                args=(pet,),
+                kwargs={"new_name": "Stitch"},
+            ),
+        ],
+    )
+    assert pet.name == "my_cat"
+    assert result.context == [
+        StateChanged(
+            id="state-changed-1",
+            state=UserState("Yuriy", [pet]),
+        ),
+        RequestReceived(
+            id="request-1",
+            method_name="rename_pet",
+            args=(pet,),
+            kwargs={"new_name": "Stitch"},
+        ),
+        EntityRequestSent(
+            id=result.context[2].id,
+            trace_id="request-1",
+            receiver=pet,
+            method_name="change_name",
+            args=(user.entity, "Stitch"),
+            kwargs={},
         ),
     ]

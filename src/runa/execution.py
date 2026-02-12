@@ -1,3 +1,5 @@
+import functools
+import inspect
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -66,6 +68,16 @@ class CreateEntityResponseReceived:
     entity: Entity[Any]
 
 
+@dataclass(kw_only=True, frozen=True)
+class EntityRequestSent:
+    id: str
+    trace_id: str
+    receiver: Entity[Any]
+    method_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+
 ExecutionContext = list[
     StateChanged
     | InitializeRequestReceived
@@ -74,10 +86,11 @@ ExecutionContext = list[
     | ResponseSent
     | CreateEntityRequestSent
     | CreateEntityResponseReceived
+    | EntityRequestSent
 ]
 
 Interception = CreateEntityRequestSent
-Trigger = InitializeRequestReceived | RequestReceived
+TraceRequest = InitializeRequestReceived | RequestReceived
 
 
 class ExecutionResult:
@@ -97,7 +110,7 @@ class Runa(Generic[EntityT]):
         self,
         context: ExecutionContext,
     ) -> ExecutionResult:
-        triggers: dict[greenlet, Trigger] = {}
+        traces: dict[greenlet, TraceRequest] = {}
         executions: dict[str, greenlet] = {}
         interceptions = deque[Interception]()
         main_greenlet = greenlet.getcurrent()
@@ -131,7 +144,7 @@ class Runa(Generic[EntityT]):
             elif isinstance(event, RequestReceived):
                 execution = greenlet(getattr(self.entity_type, event.method_name))
 
-                with _intercept_create_entity(main_greenlet):
+                with _intercept_interaction(main_greenlet, self.entity, event.id):
                     interception = execution.switch(
                         self.entity,
                         *event.args,
@@ -141,7 +154,7 @@ class Runa(Generic[EntityT]):
                 result.context.append(event)
 
                 if not execution.dead:
-                    triggers[execution] = event
+                    traces[execution] = event
                     executions[interception.id] = execution
                     interceptions.append(interception)
                 else:
@@ -177,7 +190,7 @@ class Runa(Generic[EntityT]):
                     executions[interception.id] = execution
                     interceptions.append(interception)
                 else:
-                    initial_event = triggers[execution]
+                    initial_event = traces[execution]
                     if isinstance(initial_event, RequestReceived):
                         result.context.append(
                             ResponseSent(
@@ -198,7 +211,21 @@ class Runa(Generic[EntityT]):
 
 
 @contextmanager
-def _intercept_create_entity(main_greenlet: greenlet) -> Generator[None, None]:
+def _intercept_interaction(
+    main_greenlet: greenlet,
+    subject: Entity[Any],
+    trace_id: str,
+) -> Generator[None, None, None]:
+    with (
+        _intercept_create_entity(main_greenlet),
+        _intercept_send_entity_request(main_greenlet, subject, trace_id),
+        # TODO: Protect entity set
+    ):
+        yield
+
+
+@contextmanager
+def _intercept_create_entity(main_greenlet: greenlet) -> Generator[None, None, None]:
     def new(cls: type[Entity[Any]], *args: Any, **kwargs: Any) -> Entity[Any]:
         entity: Entity[Any] = main_greenlet.switch(
             CreateEntityRequestSent(
@@ -223,6 +250,46 @@ def _intercept_create_entity(main_greenlet: greenlet) -> Generator[None, None]:
         yield
     finally:
         setattr(Entity, "__new__", original_new)
+
+
+@contextmanager
+def _intercept_send_entity_request(
+    main_greenlet: greenlet,
+    subject: Entity[Any],
+    trace_id: str,
+) -> Generator[None, None, None]:
+    def getattribute(entity: Entity[Any], name: str) -> Any:
+        if entity is subject:
+            return original_getattribute(entity, name)
+
+        if name.startswith("_"):
+            raise AttributeError("Entity state is private")
+
+        original_method = getattr(type(entity), name)
+        if not inspect.isfunction(original_method):
+            raise AttributeError("Entity state is private")
+
+        @functools.wraps(original_method)
+        def method(_: Any, /, *args: Any, **kwargs: Any) -> Any:
+            return main_greenlet.switch(
+                EntityRequestSent(
+                    id=_generate_event_id(),
+                    trace_id=trace_id,
+                    receiver=entity,
+                    method_name=name,
+                    args=args,
+                    kwargs=kwargs,
+                )
+            )
+
+        return functools.partial(method, entity)
+
+    original_getattribute = Entity.__getattribute__
+    setattr(Entity, "__getattribute__", getattribute)
+    try:
+        yield
+    finally:
+        setattr(Entity, "__getattribute__", original_getattribute)
 
 
 def _generate_event_id() -> str:
