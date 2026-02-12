@@ -5,6 +5,8 @@ from runa.execution import (
     InitializeReceived,
     InitializeHandled,
     StateChanged,
+    RequestReceived,
+    RequestHandled,
 )
 
 
@@ -22,6 +24,10 @@ class User(Entity[UserState]):
 
     def __setstate__(self, state: UserState) -> None:
         self.name = state.name
+
+    def change_name(self, name: str) -> str:
+        self.name = name
+        return "Sure!"
 
 
 def test_execute_initialize_received() -> None:
@@ -68,5 +74,45 @@ def test_execute_state_changed() -> None:
         StateChanged(
             id="state-changed-1",
             state=UserState("Yura"),
+        ),
+    ]
+
+
+def test_execute_request_received() -> None:
+    result = Runa(User).execute(
+        context=[
+            StateChanged(
+                id="state-changed-1",
+                state=UserState("Yura"),
+            ),
+            RequestReceived(
+                id="request-1",
+                method_name="change_name",
+                args=("Yuriy",),
+                kwargs={},
+            ),
+        ],
+    )
+    assert isinstance(result.entity, User)
+    assert result.entity.name == "Yuriy"
+    assert result.context == [
+        StateChanged(
+            id="state-changed-1",
+            state=UserState("Yura"),
+        ),
+        RequestReceived(
+            id="request-1",
+            method_name="change_name",
+            args=("Yuriy",),
+            kwargs={},
+        ),
+        RequestHandled(
+            id=result.context[2].id,
+            request_id="request-1",
+            response="Sure!",
+        ),
+        StateChanged(
+            id=result.context[3].id,
+            state=UserState("Yuriy"),
         ),
     ]

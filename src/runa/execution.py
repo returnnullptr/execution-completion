@@ -26,7 +26,28 @@ class StateChanged:
     state: Any
 
 
-ExecutionContext = list[InitializeReceived | InitializeHandled | StateChanged]
+@dataclass(kw_only=True, frozen=True)
+class RequestReceived:
+    id: str
+    method_name: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+
+@dataclass(kw_only=True, frozen=True)
+class RequestHandled:
+    id: str
+    request_id: str
+    response: Any
+
+
+ExecutionContext = list[
+    InitializeReceived
+    | InitializeHandled
+    | StateChanged
+    | RequestReceived
+    | RequestHandled
+]
 
 
 class ExecutionResult:
@@ -50,32 +71,52 @@ class Runa:
         entity = Entity.__new__(self.entity_type)
         result = ExecutionResult(entity, [])
 
-        assert len(context) == 1
-        event = context[0]
+        for event in context:
+            if isinstance(event, InitializeReceived):
+                execution = greenlet(getattr(self.entity_type, "__init__"))
+                execution.switch(entity, *event.args, *event.kwargs)
 
-        if isinstance(event, InitializeReceived):
-            execution = greenlet(getattr(self.entity_type, "__init__"))
-            execution.switch(entity, *event.args, *event.kwargs)
+                if not execution.dead:
+                    raise NotImplementedError
 
-            if not execution.dead:
-                raise NotImplementedError
+                result.context.append(event)
 
-            result.context.append(event)
-
-            result.context.append(
-                InitializeHandled(
-                    id=uuid7().hex,
-                    request_id=event.id,
+                result.context.append(
+                    InitializeHandled(
+                        id=uuid7().hex,
+                        request_id=event.id,
+                    )
                 )
-            )
-            result.context.append(
-                StateChanged(
-                    id=uuid7().hex,
-                    state=entity.__getstate__(),
+                result.context.append(
+                    StateChanged(
+                        id=uuid7().hex,
+                        state=entity.__getstate__(),
+                    )
                 )
-            )
-        elif isinstance(event, StateChanged):
-            result.context.append(event)
-            entity.__setstate__(event.state)
+            elif isinstance(event, StateChanged):
+                result.context.append(event)
+                entity.__setstate__(event.state)
+            elif isinstance(event, RequestReceived):
+                execution = greenlet(getattr(self.entity_type, event.method_name))
+                interruption = execution.switch(entity, *event.args, *event.kwargs)
+
+                if not execution.dead:
+                    raise NotImplementedError
+
+                result.context.append(event)
+
+                result.context.append(
+                    RequestHandled(
+                        id=uuid7().hex,
+                        request_id=event.id,
+                        response=interruption,
+                    )
+                )
+                result.context.append(
+                    StateChanged(
+                        id=uuid7().hex,
+                        state=entity.__getstate__(),
+                    )
+                )
 
         return result
