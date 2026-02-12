@@ -480,3 +480,77 @@ def test_service_response_received() -> None:
             state=UserState("Yuriy", []),
         ),
     ]
+
+
+def test_context_not_changed() -> None:
+    user = Runa(User)
+    result = user.execute(
+        context=[
+            StateChanged(
+                id="state-changed-1",
+                state=UserState("Yuriy", []),
+            ),
+            RequestReceived(
+                id="request-1",
+                method_name="come_up_pet_name",
+                args=(Species.CAT,),
+                kwargs={},
+            ),
+            ServiceRequestSent(
+                id="request-2",
+                trace_id="request-1",
+                service_type=PetNameGenerator,
+                method_name="generate_name",
+                args=(Species.CAT,),
+                kwargs={},
+            ),
+            ServiceResponseReceived(
+                id="response-1",
+                request_id="request-2",
+                response="Stitch",
+            ),
+            ResponseSent(
+                id="response-2",
+                request_id="request-1",
+                response="Stitch",
+            ),
+            StateChanged(
+                id="state-changed-2",
+                state=UserState("Yuriy", []),
+            ),
+        ],
+    )
+    assert result.context == [
+        StateChanged(
+            id="state-changed-1",
+            state=UserState("Yuriy", []),
+        ),
+        RequestReceived(
+            id="request-1",
+            method_name="come_up_pet_name",
+            args=(Species.CAT,),
+            kwargs={},
+        ),
+        ServiceRequestSent(
+            id="request-2",
+            trace_id="request-1",
+            service_type=PetNameGenerator,
+            method_name="generate_name",
+            args=(Species.CAT,),
+            kwargs={},
+        ),
+        ServiceResponseReceived(
+            id="response-1",
+            request_id="request-2",
+            response="Stitch",
+        ),
+        ResponseSent(
+            id="response-2",
+            request_id="request-1",
+            response="Stitch",
+        ),
+        StateChanged(
+            id="state-changed-2",
+            state=UserState("Yuriy", []),
+        ),
+    ]

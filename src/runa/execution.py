@@ -3,7 +3,7 @@ import inspect
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Generator, TypeVar, Generic
+from typing import Any, Generator, TypeVar, Generic, assert_never
 from uuid import uuid7
 
 from greenlet import greenlet
@@ -53,14 +53,6 @@ class CreateEntityRequestSent:
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
 
-    def equals_except_id(self, other: Interception) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self.entity_type == other.entity_type
-            and self.args == other.args
-            and self.kwargs == other.kwargs
-        )
-
 
 @dataclass(kw_only=True, frozen=True)
 class CreateEntityResponseReceived:
@@ -78,16 +70,6 @@ class EntityRequestSent:
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
 
-    def equals_except_id(self, other: Interception) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self.trace_id == other.trace_id
-            and self.receiver is other.receiver
-            and self.method_name is other.method_name
-            and self.args == other.args
-            and self.kwargs == other.kwargs
-        )
-
 
 @dataclass(kw_only=True, frozen=True)
 class EntityResponseReceived:
@@ -104,16 +86,6 @@ class ServiceRequestSent:
     method_name: str
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
-
-    def equals_except_id(self, other: Interception) -> bool:
-        return (
-            isinstance(other, type(self))
-            and self.trace_id == other.trace_id
-            and self.service_type is other.service_type
-            and self.method_name is other.method_name
-            and self.args == other.args
-            and self.kwargs == other.kwargs
-        )
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -137,8 +109,9 @@ ExecutionContext = list[
     | ServiceResponseReceived
 ]
 
-Interception = CreateEntityRequestSent | EntityRequestSent | ServiceRequestSent
-TraceMessage = InitializeRequestReceived | RequestReceived
+ExecutionInitialMessage = InitializeRequestReceived | RequestReceived
+InterceptionMessage = CreateEntityRequestSent | EntityRequestSent | ServiceRequestSent
+ExecutionFinalMessage = InitializeResponseSent | ResponseSent
 
 
 class ExecutionResult:
@@ -158,14 +131,27 @@ class Runa(Generic[EntityT]):
         self,
         context: ExecutionContext,
     ) -> ExecutionResult:
-        traces: dict[greenlet, TraceMessage] = {}
         executions: dict[str, greenlet] = {}
-        interceptions = deque[Interception]()
+        initial: dict[greenlet, ExecutionInitialMessage] = {}
+        expectations = deque[
+            StateChanged | InterceptionMessage | ExecutionFinalMessage
+        ]()
         main_greenlet = greenlet.getcurrent()
         result = ExecutionResult([])
 
         for event in context:
-            if isinstance(event, InitializeRequestReceived):
+            if isinstance(event, StateChanged):
+                if expectations:
+                    expectation = expectations.popleft()
+                    if (
+                        not isinstance(expectation, StateChanged)
+                        or event.state != expectation.state
+                    ):
+                        raise NotImplementedError("Inconsistent execution context")
+
+                result.context.append(event)
+                self.entity.__setstate__(event.state)
+            elif isinstance(event, InitializeRequestReceived):
                 execution = greenlet(getattr(self.entity_type, "__init__"))
                 execution.switch(self.entity, *event.args, **event.kwargs)
 
@@ -173,22 +159,27 @@ class Runa(Generic[EntityT]):
                     raise NotImplementedError
 
                 result.context.append(event)
-
-                result.context.append(
+                expectations.append(
                     InitializeResponseSent(
                         id=_generate_event_id(),
                         request_id=event.id,
                     )
                 )
-                result.context.append(
+                expectations.append(
                     StateChanged(
                         id=_generate_event_id(),
                         state=self.entity.__getstate__(),
                     )
                 )
-            elif isinstance(event, StateChanged):
+            elif isinstance(event, InitializeResponseSent):
+                expectation = expectations.popleft()
+                if (
+                    not isinstance(expectation, InitializeResponseSent)
+                    or event.request_id != expectation.request_id
+                ):
+                    raise NotImplementedError("Inconsistent execution context")
+
                 result.context.append(event)
-                self.entity.__setstate__(event.state)
             elif isinstance(event, RequestReceived):
                 execution = greenlet(getattr(self.entity_type, event.method_name))
 
@@ -202,30 +193,44 @@ class Runa(Generic[EntityT]):
                 result.context.append(event)
 
                 if not execution.dead:
-                    traces[execution] = event
+                    initial[execution] = event
                     executions[interception.id] = execution
-                    interceptions.append(interception)
+                    expectations.append(interception)
                 else:
-                    result.context.append(
+                    expectations.append(
                         ResponseSent(
                             id=_generate_event_id(),
                             request_id=event.id,
                             response=interception,
                         )
                     )
-                    result.context.append(
+                    expectations.append(
                         StateChanged(
                             id=_generate_event_id(),
                             state=self.entity.__getstate__(),
                         )
                     )
-            elif isinstance(event, CreateEntityRequestSent):
-                interception = interceptions.popleft()
-                if not interception.equals_except_id(event):
-                    # TODO: Raise custom error
+            elif isinstance(event, ResponseSent):
+                expectation = expectations.popleft()
+                if (
+                    not isinstance(expectation, ResponseSent)
+                    or event.request_id != expectation.request_id
+                    or event.response != expectation.response
+                ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(interception.id)
+                result.context.append(event)
+            elif isinstance(event, CreateEntityRequestSent):
+                expectation = expectations.popleft()
+                if (
+                    not isinstance(expectation, CreateEntityRequestSent)
+                    or event.entity_type != expectation.entity_type
+                    or event.args != expectation.args
+                    or event.kwargs != expectation.kwargs
+                ):
+                    raise NotImplementedError("Inconsistent execution context")
+
+                executions[event.id] = executions.pop(expectation.id)
                 result.context.append(event)
             elif isinstance(event, CreateEntityResponseReceived):
                 result.context.append(event)
@@ -236,30 +241,36 @@ class Runa(Generic[EntityT]):
 
                 if not execution.dead:
                     executions[interception.id] = execution
-                    interceptions.append(interception)
+                    expectations.append(interception)
                 else:
-                    initial_event = traces[execution]
+                    initial_event = initial[execution]
                     if isinstance(initial_event, RequestReceived):
-                        result.context.append(
+                        expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        result.context.append(
+                        expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
                             )
                         )
             elif isinstance(event, EntityRequestSent):
-                interception = interceptions.popleft()
-                if not interception.equals_except_id(event):
-                    # TODO: Raise custom error
+                expectation = expectations.popleft()
+                if (
+                    not isinstance(expectation, EntityRequestSent)
+                    or event.trace_id != expectation.trace_id
+                    or event.receiver is not expectation.receiver
+                    or event.method_name is not expectation.method_name
+                    or event.args != expectation.args
+                    or event.kwargs != expectation.kwargs
+                ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(interception.id)
+                executions[event.id] = executions.pop(expectation.id)
                 result.context.append(event)
             elif isinstance(event, EntityResponseReceived):
                 result.context.append(event)
@@ -270,30 +281,36 @@ class Runa(Generic[EntityT]):
 
                 if not execution.dead:
                     executions[interception.id] = execution
-                    interceptions.append(interception)
+                    expectations.append(interception)
                 else:
-                    initial_event = traces[execution]
+                    initial_event = initial[execution]
                     if isinstance(initial_event, RequestReceived):
-                        result.context.append(
+                        expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        result.context.append(
+                        expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
                             )
                         )
             elif isinstance(event, ServiceRequestSent):
-                interception = interceptions.popleft()
-                if not interception.equals_except_id(event):
-                    # TODO: Raise custom error
+                expectation = expectations.popleft()
+                if not (
+                    isinstance(expectation, ServiceRequestSent)
+                    and event.trace_id == expectation.trace_id
+                    and event.service_type is expectation.service_type
+                    and event.method_name is expectation.method_name
+                    and event.args == expectation.args
+                    and event.kwargs == expectation.kwargs
+                ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(interception.id)
+                executions[event.id] = executions.pop(expectation.id)
                 result.context.append(event)
             elif isinstance(event, ServiceResponseReceived):
                 result.context.append(event)
@@ -304,25 +321,27 @@ class Runa(Generic[EntityT]):
 
                 if not execution.dead:
                     executions[interception.id] = execution
-                    interceptions.append(interception)
+                    expectations.append(interception)
                 else:
-                    initial_event = traces[execution]
+                    initial_event = initial[execution]
                     if isinstance(initial_event, RequestReceived):
-                        result.context.append(
+                        expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        result.context.append(
+                        expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
                             )
                         )
+            else:
+                assert_never(event)
 
-        result.context.extend(interceptions)
+        result.context.extend(expectations)
         return result
 
 
