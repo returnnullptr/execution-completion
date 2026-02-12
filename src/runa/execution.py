@@ -1,3 +1,4 @@
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -43,11 +44,26 @@ class RequestHandled:
 
 
 @dataclass(kw_only=True, frozen=True)
-class CreateEntityPublished:
+class CreateEntityRequested:
     id: str
     entity_type: type[Entity[Any]]
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
+
+    def equals_except_id(self, other: Interception) -> bool:
+        return (
+            isinstance(other, type(self))
+            and self.entity_type == other.entity_type
+            and self.args == other.args
+            and self.kwargs == other.kwargs
+        )
+
+
+@dataclass(kw_only=True, frozen=True)
+class EntityCreatedReceived:
+    id: str
+    request_id: str
+    entity: Entity[Any]
 
 
 ExecutionContext = list[
@@ -56,36 +72,38 @@ ExecutionContext = list[
     | StateChanged
     | RequestReceived
     | RequestHandled
-    | CreateEntityPublished
+    | CreateEntityRequested
+    | EntityCreatedReceived
 ]
+
+Interception = CreateEntityRequested
+InitialEvent = InitializeReceived | RequestReceived
 
 
 class ExecutionResult:
-    def __init__(
-        self,
-        entity: Entity[Any],
-        context: ExecutionContext,
-    ) -> None:
-        self.entity = entity
+    def __init__(self, context: ExecutionContext) -> None:
         self.context = context
 
 
 class Runa:
     def __init__(self, entity_type: type[Entity[Any]]) -> None:
         self.entity_type = entity_type
+        self.entity = Entity.__new__(self.entity_type)
 
     def execute(
         self,
         context: ExecutionContext,
     ) -> ExecutionResult:
+        initial_events: dict[greenlet, InitialEvent] = {}
+        executions: dict[str, greenlet] = {}
+        interceptions = deque[Interception]()
         main_greenlet = greenlet.getcurrent()
-        entity = Entity.__new__(self.entity_type)
-        result = ExecutionResult(entity, [])
+        result = ExecutionResult([])
 
         for event in context:
             if isinstance(event, InitializeReceived):
                 execution = greenlet(getattr(self.entity_type, "__init__"))
-                execution.switch(entity, *event.args, **event.kwargs)
+                execution.switch(self.entity, *event.args, **event.kwargs)
 
                 if not execution.dead:
                     raise NotImplementedError
@@ -101,22 +119,28 @@ class Runa:
                 result.context.append(
                     StateChanged(
                         id=_generate_event_id(),
-                        state=entity.__getstate__(),
+                        state=self.entity.__getstate__(),
                     )
                 )
             elif isinstance(event, StateChanged):
                 result.context.append(event)
-                entity.__setstate__(event.state)
+                self.entity.__setstate__(event.state)
             elif isinstance(event, RequestReceived):
                 execution = greenlet(getattr(self.entity_type, event.method_name))
 
-                with _intercept_instantiate_entity(main_greenlet):
-                    interception = execution.switch(entity, *event.args, **event.kwargs)
+                with _intercept_create_entity(main_greenlet):
+                    interception = execution.switch(
+                        self.entity,
+                        *event.args,
+                        **event.kwargs,
+                    )
 
                 result.context.append(event)
 
                 if not execution.dead:
-                    result.context.append(interception)
+                    initial_events[execution] = event
+                    executions[interception.id] = execution
+                    interceptions.append(interception)
                 else:
                     result.context.append(
                         RequestHandled(
@@ -128,18 +152,53 @@ class Runa:
                     result.context.append(
                         StateChanged(
                             id=_generate_event_id(),
-                            state=entity.__getstate__(),
+                            state=self.entity.__getstate__(),
                         )
                     )
+            elif isinstance(event, CreateEntityRequested):
+                interception = interceptions.popleft()
+                if not interception.equals_except_id(event):
+                    # TODO: Raise custom error
+                    raise NotImplementedError("Inconsistent execution context")
 
+                executions[event.id] = executions.pop(interception.id)
+                result.context.append(event)
+            elif isinstance(event, EntityCreatedReceived):
+                result.context.append(event)
+
+                execution = executions.pop(event.request_id)
+                with _intercept_create_entity(main_greenlet):
+                    interception = execution.switch(event.entity)
+
+                if not execution.dead:
+                    executions[interception.id] = execution
+                    interceptions.append(interception)
+                else:
+                    initial_event = initial_events[execution]
+                    if isinstance(initial_event, RequestReceived):
+                        result.context.append(
+                            RequestHandled(
+                                id=_generate_event_id(),
+                                request_id=initial_event.id,
+                                response=interception,
+                            )
+                        )
+                        result.context.append(
+                            StateChanged(
+                                id=_generate_event_id(),
+                                state=self.entity.__getstate__(),
+                            )
+                        )
+
+        result.context.extend(interceptions)
         return result
 
 
 @contextmanager
-def _intercept_instantiate_entity(main_greenlet: greenlet) -> Generator[None, None]:
+def _intercept_create_entity(main_greenlet: greenlet) -> Generator[None, None]:
     def new(cls: type[Entity[Any]], *args: Any, **kwargs: Any) -> Entity[Any]:
         entity: Entity[Any] = main_greenlet.switch(
-            CreateEntityPublished(
+            CreateEntityRequested(
                 id=_generate_event_id(),
                 entity_type=cls,
                 args=args,
