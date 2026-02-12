@@ -7,23 +7,25 @@ authors = [
   {name = "Yuriy Kehter", email = "yuriy.kehter@gmail.com"},
 ]
 requires-python = ">=3.14.3"
-dependencies = []
+dependencies = [
+    "greenlet>=3.3.1",
+]
 
 [dependency-groups]
 dev = [
     "ruff>=0.15.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "types-greenlet>=3.3.0.20251206",
 ]
 
 [tool.mypy]
-strict = true
 mypy_path = "src"
-explicit_package_bases = true
+strict = true
 
 [tool.pytest.ini_options]
+pythonpath = "src"
 addopts = "--import-mode=importlib"
 
 [tool.uv.build-backend]
 module-root = "src"
-namespace = true
