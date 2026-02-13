@@ -85,6 +85,33 @@ class Pet(Entity):
         return False
 
 
+@dataclass
+class ProjectState:
+    readme: Readme
+
+
+class Project(Entity):
+    def __init__(self, description: str) -> None:
+        self.readme = Readme(description)
+
+    def __getstate__(self) -> ProjectState:
+        return ProjectState(self.readme)
+
+    def __setstate__(self, state: ProjectState) -> None:
+        self.readme = state.readme
+
+
+class Readme(Entity):
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def __getstate__(self) -> str:
+        return self.content
+
+    def __setstate__(self, content: str) -> None:
+        self.content = content
+
+
 def test_initialize_request_received() -> None:
     user = Runa(User)
     result = user.execute(
@@ -379,7 +406,7 @@ def test_entity_response_received() -> None:
     ]
 
 
-def test_service_request_published() -> None:
+def test_service_request_sent() -> None:
     user = Runa(User)
     result = user.execute(
         context=[
@@ -552,5 +579,31 @@ def test_context_not_changed() -> None:
         StateChanged(
             id="state-changed-2",
             state=UserState("Yuriy", []),
+        ),
+    ]
+
+
+def test_initialize_request_received_create_entity_request_sent() -> None:
+    project = Runa(Project)
+    result = project.execute(
+        context=[
+            InitializeRequestReceived(
+                id="request-1",
+                args=("Research project",),
+                kwargs={},
+            ),
+        ]
+    )
+    assert result.context == [
+        InitializeRequestReceived(
+            id="request-1",
+            args=("Research project",),
+            kwargs={},
+        ),
+        CreateEntityRequestSent(
+            id=result.context[1].id,
+            entity_type=Readme,
+            args=("Research project",),
+            kwargs={},
         ),
     ]

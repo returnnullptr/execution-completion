@@ -139,24 +139,33 @@ class Runa[EntityT: Entity]:
             # - RequestReceived
             if isinstance(event, InitializeRequestReceived):
                 execution = greenlet(getattr(self.entity_type, "__init__"))
-                execution.switch(self.entity, *event.args, **event.kwargs)
 
-                if not execution.dead:
-                    raise NotImplementedError
+                with _intercept_interaction(main_greenlet, self.entity, event.id):
+                    interception = execution.switch(
+                        self.entity,
+                        *event.args,
+                        **event.kwargs,
+                    )
 
                 self.context.append(event)
-                self.expectations.append(
-                    InitializeResponseSent(
-                        id=_generate_event_id(),
-                        request_id=event.id,
+
+                if not execution.dead:
+                    self.initial_messages[execution] = event
+                    self.executions[interception.id] = execution
+                    self.expectations.append(interception)
+                else:
+                    self.expectations.append(
+                        InitializeResponseSent(
+                            id=_generate_event_id(),
+                            request_id=event.id,
+                        )
                     )
-                )
-                self.expectations.append(
-                    StateChanged(
-                        id=_generate_event_id(),
-                        state=self.entity.__getstate__(),
+                    self.expectations.append(
+                        StateChanged(
+                            id=_generate_event_id(),
+                            state=self.entity.__getstate__(),
+                        )
                     )
-                )
             elif isinstance(event, RequestReceived):
                 execution = greenlet(getattr(self.entity_type, event.method_name))
 
