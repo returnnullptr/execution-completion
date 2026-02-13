@@ -144,7 +144,7 @@ class ServiceResponseReceived:
     response: Any
 
 
-ExecutionContext = list[
+ContextMessage = (
     StateChanged
     | InitializeRequestReceived
     | InitializeResponseSent
@@ -156,16 +156,23 @@ ExecutionContext = list[
     | EntityResponseReceived
     | ServiceRequestSent
     | ServiceResponseReceived
-]
-
-ExecutionInitialMessage = InitializeRequestReceived | RequestReceived
-InterceptionMessage = CreateEntityRequestSent | EntityRequestSent | ServiceRequestSent
-ExecutionFinalMessage = InitializeResponseSent | ResponseSent
-Expectation = StateChanged | InterceptionMessage | ExecutionFinalMessage
+)
+InitialMessage = (
+    InitializeRequestReceived  #
+    | RequestReceived
+)
+ExpectationMessage = (
+    StateChanged
+    | InitializeResponseSent
+    | ResponseSent
+    | CreateEntityRequestSent
+    | EntityRequestSent
+    | ServiceRequestSent
+)
 
 
 class ExecutionResult:
-    def __init__(self, context: ExecutionContext) -> None:
+    def __init__(self, context: list[ContextMessage]) -> None:
         self.context = context
 
 
@@ -174,11 +181,11 @@ class Runa[EntityT: Entity]:
         self.entity_type = entity_type
         self.entity = Entity.__new__(self.entity_type)
         self.executions: dict[str, greenlet] = {}
-        self.initial_messages: dict[greenlet, ExecutionInitialMessage] = {}
-        self.expectations = deque[Expectation]()
-        self.context: ExecutionContext = []
+        self.initial_messages: dict[greenlet, InitialMessage] = {}
+        self.expectations = deque[ExpectationMessage]()
+        self.context: list[ContextMessage] = []
 
-    def execute(self, context: ExecutionContext) -> ExecutionResult:
+    def execute(self, context: list[ContextMessage]) -> ExecutionResult:
         for event in context:
             # Initial request received
             if isinstance(event, InitializeRequestReceived):
