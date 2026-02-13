@@ -123,30 +123,27 @@ class Runa[EntityT: Entity]:
     def __init__(self, entity_type: type[EntityT]) -> None:
         self.entity_type = entity_type
         self.entity = Entity.__new__(self.entity_type)
-
-    def execute(
-        self,
-        context: ExecutionContext,
-    ) -> ExecutionResult:
-        executions: dict[str, greenlet] = {}
-        initial: dict[greenlet, ExecutionInitialMessage] = {}
-        expectations = deque[
+        self.executions: dict[str, greenlet] = {}
+        self.initial_messages: dict[greenlet, ExecutionInitialMessage] = {}
+        self.expectations = deque[
             StateChanged | InterceptionMessage | ExecutionFinalMessage
         ]()
+        self.context: ExecutionContext = []
+
+    def execute(self, context: ExecutionContext) -> ExecutionResult:
         main_greenlet = greenlet.getcurrent()
-        result = ExecutionResult([])
 
         for event in context:
             if isinstance(event, StateChanged):
-                if expectations:
-                    expectation = expectations.popleft()
+                if self.expectations:
+                    expectation = self.expectations.popleft()
                     if (
                         not isinstance(expectation, StateChanged)
                         or event.state != expectation.state
                     ):
                         raise NotImplementedError("Inconsistent execution context")
 
-                result.context.append(event)
+                self.context.append(event)
                 getattr(self.entity, "__setstate__")(event.state)
             elif isinstance(event, InitializeRequestReceived):
                 execution = greenlet(getattr(self.entity_type, "__init__"))
@@ -155,28 +152,28 @@ class Runa[EntityT: Entity]:
                 if not execution.dead:
                     raise NotImplementedError
 
-                result.context.append(event)
-                expectations.append(
+                self.context.append(event)
+                self.expectations.append(
                     InitializeResponseSent(
                         id=_generate_event_id(),
                         request_id=event.id,
                     )
                 )
-                expectations.append(
+                self.expectations.append(
                     StateChanged(
                         id=_generate_event_id(),
                         state=self.entity.__getstate__(),
                     )
                 )
             elif isinstance(event, InitializeResponseSent):
-                expectation = expectations.popleft()
+                expectation = self.expectations.popleft()
                 if (
                     not isinstance(expectation, InitializeResponseSent)
                     or event.request_id != expectation.request_id
                 ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                result.context.append(event)
+                self.context.append(event)
             elif isinstance(event, RequestReceived):
                 execution = greenlet(getattr(self.entity_type, event.method_name))
 
@@ -187,28 +184,28 @@ class Runa[EntityT: Entity]:
                         **event.kwargs,
                     )
 
-                result.context.append(event)
+                self.context.append(event)
 
                 if not execution.dead:
-                    initial[execution] = event
-                    executions[interception.id] = execution
-                    expectations.append(interception)
+                    self.initial_messages[execution] = event
+                    self.executions[interception.id] = execution
+                    self.expectations.append(interception)
                 else:
-                    expectations.append(
+                    self.expectations.append(
                         ResponseSent(
                             id=_generate_event_id(),
                             request_id=event.id,
                             response=interception,
                         )
                     )
-                    expectations.append(
+                    self.expectations.append(
                         StateChanged(
                             id=_generate_event_id(),
                             state=self.entity.__getstate__(),
                         )
                     )
             elif isinstance(event, ResponseSent):
-                expectation = expectations.popleft()
+                expectation = self.expectations.popleft()
                 if (
                     not isinstance(expectation, ResponseSent)
                     or event.request_id != expectation.request_id
@@ -216,9 +213,9 @@ class Runa[EntityT: Entity]:
                 ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                result.context.append(event)
+                self.context.append(event)
             elif isinstance(event, CreateEntityRequestSent):
-                expectation = expectations.popleft()
+                expectation = self.expectations.popleft()
                 if (
                     not isinstance(expectation, CreateEntityRequestSent)
                     or event.entity_type != expectation.entity_type
@@ -227,36 +224,37 @@ class Runa[EntityT: Entity]:
                 ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(expectation.id)
-                result.context.append(event)
+                self.executions[event.id] = self.executions.pop(expectation.id)
+                self.context.append(event)
             elif isinstance(event, CreateEntityResponseReceived):
-                result.context.append(event)
+                self.context.append(event)
 
-                execution = executions.pop(event.request_id)
+                execution = self.executions.pop(event.request_id)
+
                 with _intercept_interaction(main_greenlet, self.entity, event.id):
                     interception = execution.switch(event.entity)
 
                 if not execution.dead:
-                    executions[interception.id] = execution
-                    expectations.append(interception)
+                    self.executions[interception.id] = execution
+                    self.expectations.append(interception)
                 else:
-                    initial_event = initial[execution]
+                    initial_event = self.initial_messages[execution]
                     if isinstance(initial_event, RequestReceived):
-                        expectations.append(
+                        self.expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        expectations.append(
+                        self.expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
                             )
                         )
             elif isinstance(event, EntityRequestSent):
-                expectation = expectations.popleft()
+                expectation = self.expectations.popleft()
                 if (
                     not isinstance(expectation, EntityRequestSent)
                     or event.trace_id != expectation.trace_id
@@ -267,36 +265,36 @@ class Runa[EntityT: Entity]:
                 ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(expectation.id)
-                result.context.append(event)
+                self.executions[event.id] = self.executions.pop(expectation.id)
+                self.context.append(event)
             elif isinstance(event, EntityResponseReceived):
-                result.context.append(event)
+                self.context.append(event)
 
-                execution = executions.pop(event.request_id)
+                execution = self.executions.pop(event.request_id)
                 with _intercept_interaction(main_greenlet, self.entity, event.id):
                     interception = execution.switch(event.response)
 
                 if not execution.dead:
-                    executions[interception.id] = execution
-                    expectations.append(interception)
+                    self.executions[interception.id] = execution
+                    self.expectations.append(interception)
                 else:
-                    initial_event = initial[execution]
+                    initial_event = self.initial_messages[execution]
                     if isinstance(initial_event, RequestReceived):
-                        expectations.append(
+                        self.expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        expectations.append(
+                        self.expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
                             )
                         )
             elif isinstance(event, ServiceRequestSent):
-                expectation = expectations.popleft()
+                expectation = self.expectations.popleft()
                 if not (
                     isinstance(expectation, ServiceRequestSent)
                     and event.trace_id == expectation.trace_id
@@ -307,29 +305,29 @@ class Runa[EntityT: Entity]:
                 ):
                     raise NotImplementedError("Inconsistent execution context")
 
-                executions[event.id] = executions.pop(expectation.id)
-                result.context.append(event)
+                self.executions[event.id] = self.executions.pop(expectation.id)
+                self.context.append(event)
             elif isinstance(event, ServiceResponseReceived):
-                result.context.append(event)
+                self.context.append(event)
 
-                execution = executions.pop(event.request_id)
+                execution = self.executions.pop(event.request_id)
                 with _intercept_interaction(main_greenlet, self.entity, event.id):
                     interception = execution.switch(event.response)
 
                 if not execution.dead:
-                    executions[interception.id] = execution
-                    expectations.append(interception)
+                    self.executions[interception.id] = execution
+                    self.expectations.append(interception)
                 else:
-                    initial_event = initial[execution]
+                    initial_event = self.initial_messages[execution]
                     if isinstance(initial_event, RequestReceived):
-                        expectations.append(
+                        self.expectations.append(
                             ResponseSent(
                                 id=_generate_event_id(),
                                 request_id=initial_event.id,
                                 response=interception,
                             )
                         )
-                        expectations.append(
+                        self.expectations.append(
                             StateChanged(
                                 id=_generate_event_id(),
                                 state=self.entity.__getstate__(),
@@ -338,8 +336,8 @@ class Runa[EntityT: Entity]:
             else:
                 assert_never(event)
 
-        result.context.extend(expectations)
-        return result
+        self.context.extend(self.expectations)
+        return ExecutionResult(self.context)
 
 
 @contextmanager
