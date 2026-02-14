@@ -4,11 +4,11 @@ from enum import StrEnum
 
 from runa import Entity, Runa, Service
 from runa.execution import (
-    InitializeRequestReceived,
-    InitializeResponseSent,
+    CreateEntityRequestReceived,
+    CreateEntityResponseSent,
     StateChanged,
-    RequestReceived,
-    ResponseSent,
+    EntityRequestReceived,
+    EntityResponseSent,
     CreateEntityRequestSent,
     CreateEntityResponseReceived,
     EntityRequestSent,
@@ -132,11 +132,11 @@ class Readme(Entity):
         self.content = content
 
 
-def test_initialize_request_received() -> None:
+def test_create_entity_request_received() -> None:
     user = Runa(User)
     result = user.execute(
         context=[
-            InitializeRequestReceived(
+            CreateEntityRequestReceived(
                 offset=0,
                 args=("Yura",),
                 kwargs={},
@@ -145,12 +145,12 @@ def test_initialize_request_received() -> None:
     )
     assert user.entity.name == "Yura"
     assert result.context == [
-        InitializeRequestReceived(
+        CreateEntityRequestReceived(
             offset=0,
             args=("Yura",),
             kwargs={},
         ),
-        InitializeResponseSent(
+        CreateEntityResponseSent(
             offset=1,
             request_offset=0,
         ),
@@ -180,7 +180,7 @@ def test_state_changed() -> None:
     ]
 
 
-def test_request_received() -> None:
+def test_entity_request_received() -> None:
     user = Runa(User)
     result = user.execute(
         context=[
@@ -188,7 +188,7 @@ def test_request_received() -> None:
                 offset=0,
                 state=UserState("Yura", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="change_name",
                 args=("Yuriy",),
@@ -202,13 +202,13 @@ def test_request_received() -> None:
             offset=0,
             state=UserState("Yura", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="change_name",
             args=("Yuriy",),
             kwargs={},
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=2,
             request_offset=1,
             response="Sure!",
@@ -228,7 +228,7 @@ def test_create_entity_request_sent() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="add_pet",
                 args=(),
@@ -242,7 +242,7 @@ def test_create_entity_request_sent() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="add_pet",
             args=(),
@@ -267,7 +267,7 @@ def test_create_entity_response_received() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="add_pet",
                 args=(),
@@ -293,7 +293,7 @@ def test_create_entity_response_received() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="add_pet",
             args=(),
@@ -311,7 +311,7 @@ def test_create_entity_response_received() -> None:
             request_offset=2,
             entity=pet,
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=4,
             request_offset=1,
             response=None,
@@ -332,7 +332,7 @@ def test_entity_request_sent() -> None:
                 offset=0,
                 state=UserState("Yuriy", [pet]),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="rename_pet",
                 args=(pet,),
@@ -346,7 +346,7 @@ def test_entity_request_sent() -> None:
             offset=0,
             state=UserState("Yuriy", [pet]),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="rename_pet",
             args=(pet,),
@@ -372,7 +372,7 @@ def test_entity_response_received() -> None:
                 offset=0,
                 state=UserState("Yuriy", [pet]),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="rename_pet",
                 args=(pet,),
@@ -398,7 +398,7 @@ def test_entity_response_received() -> None:
             offset=0,
             state=UserState("Yuriy", [pet]),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="rename_pet",
             args=(pet,),
@@ -417,7 +417,7 @@ def test_entity_response_received() -> None:
             request_offset=2,
             response=True,
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=4,
             request_offset=1,
             response=None,
@@ -437,7 +437,7 @@ def test_service_request_sent() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="come_up_pet_name",
                 args=(Species.CAT,),
@@ -450,7 +450,7 @@ def test_service_request_sent() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="come_up_pet_name",
             args=(Species.CAT,),
@@ -475,7 +475,7 @@ def test_service_response_received() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="come_up_pet_name",
                 args=(Species.CAT,),
@@ -501,7 +501,7 @@ def test_service_response_received() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="come_up_pet_name",
             args=(Species.CAT,),
@@ -520,7 +520,7 @@ def test_service_response_received() -> None:
             request_offset=2,
             response="Stitch",
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=4,
             request_offset=1,
             response="Stitch",
@@ -540,7 +540,7 @@ def test_context_not_changed() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="come_up_pet_name",
                 args=(Species.CAT,),
@@ -559,7 +559,7 @@ def test_context_not_changed() -> None:
                 request_offset=2,
                 response="Stitch",
             ),
-            ResponseSent(
+            EntityResponseSent(
                 offset=4,
                 request_offset=1,
                 response="Stitch",
@@ -575,7 +575,7 @@ def test_context_not_changed() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="come_up_pet_name",
             args=(Species.CAT,),
@@ -594,7 +594,7 @@ def test_context_not_changed() -> None:
             request_offset=2,
             response="Stitch",
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=4,
             request_offset=1,
             response="Stitch",
@@ -606,11 +606,11 @@ def test_context_not_changed() -> None:
     ]
 
 
-def test_initialize_request_received_create_entity_request_sent() -> None:
+def test_create_entity_request_received_create_entity_request_sent() -> None:
     project = Runa(Project)
     result = project.execute(
         context=[
-            InitializeRequestReceived(
+            CreateEntityRequestReceived(
                 offset=0,
                 args=("Research project",),
                 kwargs={},
@@ -618,7 +618,7 @@ def test_initialize_request_received_create_entity_request_sent() -> None:
         ]
     )
     assert result.context == [
-        InitializeRequestReceived(
+        CreateEntityRequestReceived(
             offset=0,
             args=("Research project",),
             kwargs={},
@@ -633,12 +633,12 @@ def test_initialize_request_received_create_entity_request_sent() -> None:
     ]
 
 
-def test_create_entity_response_received_initialize_response_sent() -> None:
+def test_create_entity_response_received_create_entity_response_sent() -> None:
     project = Runa(Project)
     readme = Readme("Research project")
     result = project.execute(
         context=[
-            InitializeRequestReceived(
+            CreateEntityRequestReceived(
                 offset=0,
                 args=("Research project",),
                 kwargs={},
@@ -658,7 +658,7 @@ def test_create_entity_response_received_initialize_response_sent() -> None:
         ]
     )
     assert result.context == [
-        InitializeRequestReceived(
+        CreateEntityRequestReceived(
             offset=0,
             args=("Research project",),
             kwargs={},
@@ -675,7 +675,7 @@ def test_create_entity_response_received_initialize_response_sent() -> None:
             request_offset=1,
             entity=readme,
         ),
-        InitializeResponseSent(
+        CreateEntityResponseSent(
             offset=3,
             request_offset=0,
         ),
@@ -695,7 +695,7 @@ def test_request_sequence() -> None:
                 offset=0,
                 state=ProjectState(readme, None, None),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="write_tests_and_code",
                 args=(),
@@ -721,7 +721,7 @@ def test_request_sequence() -> None:
             offset=0,
             state=ProjectState(readme, None, None),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="write_tests_and_code",
             args=(),
@@ -760,7 +760,7 @@ def test_execution_context_cached() -> None:
                 offset=0,
                 state=UserState("Yuriy", []),
             ),
-            RequestReceived(
+            EntityRequestReceived(
                 offset=1,
                 method_name="add_pet",
                 args=(),
@@ -785,7 +785,7 @@ def test_execution_context_cached() -> None:
             offset=0,
             state=UserState("Yuriy", []),
         ),
-        RequestReceived(
+        EntityRequestReceived(
             offset=1,
             method_name="add_pet",
             args=(),
@@ -803,7 +803,7 @@ def test_execution_context_cached() -> None:
             request_offset=2,
             entity=pet,
         ),
-        ResponseSent(
+        EntityResponseSent(
             offset=4,
             request_offset=1,
             response=None,

@@ -12,14 +12,14 @@ from runa.service import Service
 
 
 @dataclass(kw_only=True, frozen=True)
-class InitializeRequestReceived:
+class CreateEntityRequestReceived:
     offset: int
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
 
 
 @dataclass(kw_only=True, frozen=True)
-class InitializeResponseSent:
+class CreateEntityResponseSent:
     offset: int
     request_offset: int
 
@@ -31,7 +31,7 @@ class StateChanged:
 
 
 @dataclass(kw_only=True, frozen=True)
-class RequestReceived:
+class EntityRequestReceived:
     offset: int
     method_name: str
     args: tuple[Any, ...]
@@ -39,7 +39,7 @@ class RequestReceived:
 
 
 @dataclass(kw_only=True, frozen=True)
-class ResponseSent:
+class EntityResponseSent:
     offset: int
     request_offset: int
     response: Any
@@ -97,10 +97,10 @@ class ServiceResponseReceived:
 
 ContextMessage = (
     StateChanged
-    | InitializeRequestReceived
-    | InitializeResponseSent
-    | RequestReceived
-    | ResponseSent
+    | CreateEntityRequestReceived
+    | CreateEntityResponseSent
+    | EntityRequestReceived
+    | EntityResponseSent
     | CreateEntityRequestSent
     | CreateEntityResponseReceived
     | EntityRequestSent
@@ -109,13 +109,13 @@ ContextMessage = (
     | ServiceResponseReceived
 )
 InitialMessage = (
-    InitializeRequestReceived  #
-    | RequestReceived
+    CreateEntityRequestReceived  #
+    | EntityRequestReceived
 )
 ExpectationMessage = (
     StateChanged
-    | InitializeResponseSent
-    | ResponseSent
+    | CreateEntityResponseSent
+    | EntityResponseSent
     | CreateEntityRequestSent
     | EntityRequestSent
     | ServiceRequestSent
@@ -148,7 +148,7 @@ class Runa[EntityT: Entity]:
             event = input_deque.popleft()
 
             # Initial request received
-            if isinstance(event, InitializeRequestReceived):
+            if isinstance(event, CreateEntityRequestReceived):
                 if event.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
                 self._offset = event.offset + 1
@@ -164,7 +164,7 @@ class Runa[EntityT: Entity]:
                         **event.kwargs,
                     )
                 )
-            elif isinstance(event, RequestReceived):
+            elif isinstance(event, EntityRequestReceived):
                 if event.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
                 self._offset = event.offset + 1
@@ -222,11 +222,11 @@ class Runa[EntityT: Entity]:
                 self.context.append(event)
 
             # Response sent
-            elif isinstance(event, InitializeResponseSent):
+            elif isinstance(event, CreateEntityResponseSent):
                 if event != expectations.popleft():
                     raise NotImplementedError("Inconsistent execution context")
                 self.context.append(event)
-            elif isinstance(event, ResponseSent):
+            elif isinstance(event, EntityResponseSent):
                 if event != expectations.popleft():
                     raise NotImplementedError("Inconsistent execution context")
                 self.context.append(event)
@@ -265,9 +265,9 @@ class Runa[EntityT: Entity]:
             return [interception]
 
         del self.initial_messages[execution]
-        if isinstance(initial_message, InitializeRequestReceived):
+        if isinstance(initial_message, CreateEntityRequestReceived):
             return [
-                InitializeResponseSent(
+                CreateEntityResponseSent(
                     offset=self._next_offset(),
                     request_offset=initial_message.offset,
                 ),
@@ -276,9 +276,9 @@ class Runa[EntityT: Entity]:
                     state=self.entity.__getstate__(),
                 ),
             ]
-        elif isinstance(initial_message, RequestReceived):
+        elif isinstance(initial_message, EntityRequestReceived):
             return [
-                ResponseSent(
+                EntityResponseSent(
                     offset=self._next_offset(),
                     request_offset=initial_message.offset,
                     response=interception,
