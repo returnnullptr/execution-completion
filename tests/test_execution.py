@@ -1169,3 +1169,123 @@ def test_asynchronous_requests_received() -> None:
             state=UserState("Yuriy", [kisaka_san]),
         ),
     ]
+
+
+def test_cleanup_remove_processed_messages() -> None:
+    user = Runa(User)
+    kisaka_san = Pet("Kisaka-san", owner=user.entity)
+    user.execute(
+        context=[
+            StateChanged(
+                offset=0,
+                state=UserState("Yuriy", []),
+            ),
+            EntityRequestReceived(
+                offset=1,
+                method_name="add_pet",
+                args=(),
+                kwargs={"name": "Stitch"},
+            ),
+            CreateEntityRequestSent(
+                offset=2,
+                trace_offset=1,
+                entity_type=Pet,
+                args=("Stitch",),
+                kwargs={"owner": user.entity},
+            ),
+            EntityRequestReceived(
+                offset=3,
+                method_name="add_pet",
+                args=(),
+                kwargs={"name": "Kisaka-san"},
+            ),
+            CreateEntityRequestSent(
+                offset=4,
+                trace_offset=3,
+                entity_type=Pet,
+                args=("Kisaka-san",),
+                kwargs={"owner": user.entity},
+            ),
+            CreateEntityResponseReceived(
+                offset=5,
+                request_offset=4,
+                entity=kisaka_san,
+            ),
+        ]
+    )
+    assert user.cleanup() == [
+        EntityRequestReceived(
+            offset=3,
+            method_name="add_pet",
+            args=(),
+            kwargs={"name": "Kisaka-san"},
+        ),
+        CreateEntityRequestSent(
+            offset=4,
+            trace_offset=3,
+            entity_type=Pet,
+            args=("Kisaka-san",),
+            kwargs={"owner": user.entity},
+        ),
+        CreateEntityResponseReceived(
+            offset=5,
+            request_offset=4,
+            entity=kisaka_san,
+        ),
+        EntityResponseSent(
+            offset=6,
+            request_offset=3,
+            response=None,
+        ),
+    ]
+    assert user.context == [
+        StateChanged(
+            offset=0,
+            state=UserState("Yuriy", []),
+        ),
+        EntityRequestReceived(
+            offset=1,
+            method_name="add_pet",
+            args=(),
+            kwargs={"name": "Stitch"},
+        ),
+        CreateEntityRequestSent(
+            offset=2,
+            trace_offset=1,
+            entity_type=Pet,
+            args=("Stitch",),
+            kwargs={"owner": user.entity},
+        ),
+        StateChanged(
+            offset=7,
+            state=UserState("Yuriy", [kisaka_san]),
+        ),
+    ]
+
+
+def test_cleanup_collapse_state_changed() -> None:
+    runa = Runa(User)
+    runa.execute(
+        context=[
+            StateChanged(
+                offset=0,
+                state=UserState("Yura", []),
+            ),
+            StateChanged(
+                offset=1,
+                state=UserState("Yuriy", []),
+            ),
+        ]
+    )
+    assert runa.cleanup() == [
+        StateChanged(
+            offset=0,
+            state=UserState("Yura", []),
+        ),
+    ]
+    assert runa.context == [
+        StateChanged(
+            offset=1,
+            state=UserState("Yuriy", []),
+        ),
+    ]

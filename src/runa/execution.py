@@ -152,6 +152,24 @@ ExpectationMessage = (
     | EntityErrorSent
 )
 
+RESPONSE_SENT = (
+    CreateEntityResponseSent,
+    EntityResponseSent,
+    EntityErrorSent,
+)
+REQUEST_SENT = (
+    CreateEntityRequestSent,
+    EntityRequestSent,
+    ServiceRequestSent,
+)
+RESPONSE_RECEIVED = (
+    CreateEntityResponseReceived,
+    EntityResponseReceived,
+    ServiceResponseReceived,
+    EntityErrorReceived,
+    ServiceErrorReceived,
+)
+
 
 class ExecutionResult:
     def __init__(self, context: list[ContextMessage]) -> None:
@@ -354,6 +372,45 @@ class Runa[EntityT: Entity]:
 
         self.context.extend(expectations)
         return ExecutionResult(self.context.copy())
+
+    def cleanup(self) -> list[ContextMessage]:
+        processed_offsets = set[int]()
+
+        # Gather processed requests, their responses
+        # and requests sent during processing
+        for message in reversed(self.context):
+            if isinstance(message, RESPONSE_SENT):
+                processed_offsets.add(message.request_offset)
+                processed_offsets.add(message.offset)
+            elif (
+                isinstance(message, REQUEST_SENT)
+                and message.trace_offset in processed_offsets
+            ):
+                processed_offsets.add(message.offset)
+
+        # Gather responses received within processed requests
+        for message in self.context:
+            if (
+                isinstance(message, RESPONSE_RECEIVED)
+                and message.request_offset in processed_offsets
+            ):
+                processed_offsets.add(message.offset)
+
+        processed: list[ContextMessage] = []
+        unprocessed: list[ContextMessage] = []
+        for message in self.context:
+            if isinstance(message, StateChanged):
+                # Collapse duplicate StateChanged messages
+                if unprocessed and isinstance(unprocessed[-1], StateChanged):
+                    processed.append(unprocessed.pop())
+                unprocessed.append(message)
+            elif message.offset in processed_offsets:
+                processed.append(message)
+            else:
+                unprocessed.append(message)
+
+        self.context = unprocessed
+        return processed
 
     def _continue(
         self,
