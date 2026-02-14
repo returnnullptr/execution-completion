@@ -1079,3 +1079,93 @@ def test_service_error_received() -> None:
             state=ProjectState(readme, None, None),
         ),
     ]
+
+
+def test_asynchronous_requests_received() -> None:
+    user = Runa(User)
+    kisaka_san = Pet("Kisaka-san", owner=user.entity)
+    result = user.execute(
+        context=[
+            StateChanged(
+                offset=0,
+                state=UserState("Yuriy", []),
+            ),
+            EntityRequestReceived(
+                offset=1,
+                method_name="add_pet",
+                args=(),
+                kwargs={"name": "Stitch"},
+            ),
+            CreateEntityRequestSent(
+                offset=2,
+                trace_offset=1,
+                entity_type=Pet,
+                args=("Stitch",),
+                kwargs={"owner": user.entity},
+            ),
+            EntityRequestReceived(
+                offset=3,
+                method_name="add_pet",
+                args=(),
+                kwargs={"name": "Kisaka-san"},
+            ),
+            CreateEntityRequestSent(
+                offset=4,
+                trace_offset=3,
+                entity_type=Pet,
+                args=("Kisaka-san",),
+                kwargs={"owner": user.entity},
+            ),
+            CreateEntityResponseReceived(
+                offset=5,
+                request_offset=4,
+                entity=kisaka_san,
+            ),
+        ]
+    )
+    assert result.context == [
+        StateChanged(
+            offset=0,
+            state=UserState("Yuriy", []),
+        ),
+        EntityRequestReceived(
+            offset=1,
+            method_name="add_pet",
+            args=(),
+            kwargs={"name": "Stitch"},
+        ),
+        CreateEntityRequestSent(
+            offset=2,
+            trace_offset=1,
+            entity_type=Pet,
+            args=("Stitch",),
+            kwargs={"owner": user.entity},
+        ),
+        EntityRequestReceived(
+            offset=3,
+            method_name="add_pet",
+            args=(),
+            kwargs={"name": "Kisaka-san"},
+        ),
+        CreateEntityRequestSent(
+            offset=4,
+            trace_offset=3,
+            entity_type=Pet,
+            args=("Kisaka-san",),
+            kwargs={"owner": user.entity},
+        ),
+        CreateEntityResponseReceived(
+            offset=5,
+            request_offset=4,
+            entity=kisaka_san,
+        ),
+        EntityResponseSent(
+            offset=6,
+            request_offset=3,
+            response=None,
+        ),
+        StateChanged(
+            offset=7,
+            state=UserState("Yuriy", [kisaka_san]),
+        ),
+    ]
