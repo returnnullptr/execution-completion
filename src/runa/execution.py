@@ -47,11 +47,11 @@ class Execution[Subject: Entity]:
         return self._context.copy()
 
     def complete(self, messages: Iterable[ContextMessage]) -> list[OutputMessage]:
-        input_iterator = iter(messages)
+        input_messages = iter(messages)
         for message in self._context:
             # TODO: Reset execution state and raise custom error
             try:
-                if message != next(input_iterator):
+                if message != next(input_messages):
                     raise NotImplementedError("Cache miss")
             except StopIteration:
                 raise NotImplementedError("Cache miss")
@@ -60,7 +60,7 @@ class Execution[Subject: Entity]:
 
         # TODO: Wrap with try-except and reset execution state in case of error
         output_messages = deque[OutputMessage]()
-        for message in input_iterator:
+        for message in input_messages:
             if isinstance(message, REQUEST_RECEIVED):
                 # TODO: Reset execution state and raise custom error
                 if message.offset < self._offset:
@@ -76,16 +76,16 @@ class Execution[Subject: Entity]:
                 else:
                     assert_never(message)  # pragma: no cover
 
-                execution = greenlet(method)
-                self._initiators[execution] = message
+                method_greenlet = greenlet(method)
+                self._initiators[method_greenlet] = message
 
                 self._context.append(message)
                 self._offset = message.offset + 1
                 output_messages.extend(
                     self._continue(
-                        execution,
+                        method_greenlet,
                         functools.partial(
-                            execution.switch,
+                            method_greenlet.switch,
                             self.subject,
                             *message.args,
                             **message.kwargs,
@@ -97,15 +97,15 @@ class Execution[Subject: Entity]:
                 if message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
 
-                execution = self._greenlets.pop(message.request_offset)
+                method_greenlet = self._greenlets.pop(message.request_offset)
 
                 self._context.append(message)
                 self._offset = message.offset + 1
                 output_messages.extend(
                     self._continue(
-                        execution,
+                        method_greenlet,
                         functools.partial(
-                            execution.switch,
+                            method_greenlet.switch,
                             message.response,
                         ),
                     )
@@ -125,15 +125,15 @@ class Execution[Subject: Entity]:
                         message.kwargs,
                     )
 
-                execution = self._greenlets.pop(message.request_offset)
+                method_greenlet = self._greenlets.pop(message.request_offset)
 
                 self._context.append(message)
                 self._offset = message.offset + 1
                 output_messages.extend(
                     self._continue(
-                        execution,
+                        method_greenlet,
                         functools.partial(
-                            execution.throw,
+                            method_greenlet.throw,
                             type(exception),
                             exception,
                         ),
@@ -214,14 +214,14 @@ class Execution[Subject: Entity]:
 
     def _continue(
         self,
-        execution: greenlet,
-        switch_to_execution: Callable[[], Any],
+        method_greenlet: greenlet,
+        switch_to_greenlet: Callable[[], Any],
     ) -> list[OutputMessage]:
-        initiator = self._initiators[execution]
+        initiator = self._initiators[method_greenlet]
 
         try:
             with Execution._intercept_interaction(self, initiator.offset):
-                interception = switch_to_execution()
+                output_message_or_result = switch_to_greenlet()
         except Error as ex:
             error_arguments = self._errors[ex]
 
@@ -252,11 +252,13 @@ class Execution[Subject: Entity]:
             else:
                 assert_never(initiator)  # pragma: no cover
 
-        if not execution.dead:
-            self._greenlets[interception.offset] = execution
-            return [interception]
+        if not method_greenlet.dead:
+            output_message = output_message_or_result
+            self._greenlets[output_message.offset] = method_greenlet
+            return [output_message]
 
-        del self._initiators[execution]
+        result = output_message_or_result
+        del self._initiators[method_greenlet]
         if isinstance(initiator, CreateEntityRequestReceived):
             return [
                 CreateEntityResponseSent(
@@ -273,7 +275,7 @@ class Execution[Subject: Entity]:
                 EntityMethodResponseSent(
                     offset=self._next_offset(),
                     request_offset=initiator.offset,
-                    response=interception,
+                    response=result,
                 ),
                 EntityStateChanged(
                     offset=self._next_offset(),
