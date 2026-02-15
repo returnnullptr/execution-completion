@@ -32,11 +32,11 @@ from runa.context import (
 from runa.model import Entity, Error, Service
 
 
-class Execution[T: Entity]:
-    def __init__(self, subject_type: type[T]) -> None:
+class Execution[Subject: Entity]:
+    def __init__(self, subject_type: type[Subject]) -> None:
         self.subject = Entity.__new__(subject_type)
         self._greenlets: dict[int, greenlet] = {}
-        self._requests: dict[greenlet, InitiatorMessage] = {}
+        self._initiators: dict[greenlet, InitiatorMessage] = {}
         self._errors = WeakKeyDictionary[Error, _ErrorArguments]()
         self._context: list[ContextMessage] = []
         self._offset = 0
@@ -56,7 +56,7 @@ class Execution[T: Entity]:
 
             self._offset = message.offset + 1
 
-        output_deque = deque[OutputMessage]()
+        output_messages = deque[OutputMessage]()
         while True:
             try:
                 message = next(input_iterator)
@@ -75,11 +75,11 @@ class Execution[T: Entity]:
                     assert_never(message)
 
                 execution = greenlet(method)
+                self._initiators[execution] = message
 
-                self._requests[execution] = message
                 self._context.append(message)
                 self._offset = message.offset + 1
-                output_deque.extend(
+                output_messages.extend(
                     self._continue(
                         execution,
                         functools.partial(
@@ -98,7 +98,7 @@ class Execution[T: Entity]:
 
                 self._context.append(message)
                 self._offset = message.offset + 1
-                output_deque.extend(
+                output_messages.extend(
                     self._continue(
                         execution,
                         functools.partial(
@@ -125,7 +125,7 @@ class Execution[T: Entity]:
 
                 self._context.append(message)
                 self._offset = message.offset + 1
-                output_deque.extend(
+                output_messages.extend(
                     self._continue(
                         execution,
                         functools.partial(
@@ -139,30 +139,30 @@ class Execution[T: Entity]:
                 isinstance(message, REQUEST_SENT)  #
                 or isinstance(message, RESPONSE_SENT)
             ):
-                if message != output_deque.popleft():
+                if message != output_messages.popleft():
                     raise NotImplementedError("Inconsistent execution context")
+
                 self._context.append(message)
             elif isinstance(message, EntityStateChanged):
-                if output_deque:
-                    if message != output_deque.popleft():
+                if output_messages:
+                    if message != output_messages.popleft():
                         raise NotImplementedError("Inconsistent execution context")
                 elif message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
+
                 getattr(self.subject, "__setstate__")(message.state)
                 self._context.append(message)
                 self._offset = message.offset + 1
-
             else:
                 assert_never(message)
 
-        self._context.extend(output_deque)
-        return list(output_deque)
+        self._context.extend(output_messages)
+        return list(output_messages)
 
     def cleanup(self) -> list[ContextMessage]:
         processed_offsets = set[int]()
 
-        # Gather processed requests, their responses
-        # and requests sent during processing
+        # Gather responses sent, their requests and requests sent during processing
         for message in reversed(self._context):
             if isinstance(message, RESPONSE_SENT):
                 processed_offsets.add(message.request_offset)
@@ -173,7 +173,7 @@ class Execution[T: Entity]:
             ):
                 processed_offsets.add(message.offset)
 
-        # Gather responses received within processed requests
+        # Gather responses and errors received within processed requests
         for message in self._context:
             if (
                 isinstance(message, RESPONSE_RECEIVED)  #
@@ -210,7 +210,7 @@ class Execution[T: Entity]:
         execution: greenlet,
         switch_to_execution: Callable[[], Any],
     ) -> list[OutputMessage]:
-        initiator = self._requests[execution]
+        initiator = self._initiators[execution]
 
         try:
             with Execution._intercept_interaction(self, initiator.offset):
@@ -252,7 +252,7 @@ class Execution[T: Entity]:
             self._greenlets[interception.offset] = execution
             return [interception]
 
-        del self._requests[execution]
+        del self._initiators[execution]
         if isinstance(initiator, CreateEntityRequestReceived):
             return [
                 CreateEntityResponseSent(
