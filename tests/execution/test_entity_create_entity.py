@@ -99,7 +99,7 @@ def test_create_entity_response_received_then_create_entity_response_sent() -> N
         CreateEntityResponseReceived(
             offset=2,
             request_offset=1,
-            entity=box,
+            response=box,
         ),
     ]
 
@@ -195,7 +195,7 @@ def test_create_entity_response_received_then_entity_method_response_sent() -> N
         CreateEntityResponseReceived(
             offset=3,
             request_offset=2,
-            entity=pencil,
+            response=pencil,
         ),
     ]
 

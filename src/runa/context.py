@@ -30,7 +30,7 @@ class CreateEntityResponseSent:
 class CreateEntityResponseReceived:
     offset: int
     request_offset: int
-    entity: Entity
+    response: Entity
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -163,6 +163,10 @@ OutputMessage = Union[
     ServiceMethodRequestSent,
     EntityStateChanged,
 ]
+REQUEST_RECEIVED = (
+    CreateEntityRequestReceived,
+    EntityMethodRequestReceived,
+)
 RESPONSE_SENT = (
     CreateEntityResponseSent,
     CreateEntityErrorSent,
@@ -176,9 +180,11 @@ REQUEST_SENT = (
 )
 RESPONSE_RECEIVED = (
     CreateEntityResponseReceived,
-    CreateEntityErrorReceived,
     EntityMethodResponseReceived,
-    EntityMethodErrorReceived,
     ServiceMethodResponseReceived,
+)
+ERROR_RECEIVED = (
+    CreateEntityErrorReceived,
+    EntityMethodErrorReceived,
     ServiceMethodErrorReceived,
 )

@@ -9,28 +9,25 @@ from weakref import WeakKeyDictionary
 from greenlet import greenlet
 
 from runa.context import (
-    REQUEST_SENT,
-    RESPONSE_RECEIVED,
-    RESPONSE_SENT,
     ContextMessage,
-    CreateEntityErrorReceived,
     CreateEntityErrorSent,
     CreateEntityRequestReceived,
     CreateEntityRequestSent,
-    CreateEntityResponseReceived,
     CreateEntityResponseSent,
-    EntityMethodErrorReceived,
     EntityMethodErrorSent,
     EntityMethodRequestReceived,
     EntityMethodRequestSent,
-    EntityMethodResponseReceived,
     EntityMethodResponseSent,
     EntityStateChanged,
     InitiatorMessage,
     OutputMessage,
     ServiceMethodErrorReceived,
     ServiceMethodRequestSent,
-    ServiceMethodResponseReceived,
+    RESPONSE_SENT,
+    REQUEST_SENT,
+    RESPONSE_RECEIVED,
+    ERROR_RECEIVED,
+    REQUEST_RECEIVED,
 )
 from runa.model import Entity, Error, Service
 
@@ -39,7 +36,7 @@ class Execution[T: Entity]:
     def __init__(self, subject_type: type[T]) -> None:
         self.subject = Entity.__new__(subject_type)
         self._greenlets: dict[int, greenlet] = {}
-        self._initiators: dict[greenlet, InitiatorMessage] = {}
+        self._requests: dict[greenlet, InitiatorMessage] = {}
         self._errors = WeakKeyDictionary[Error, _ErrorArguments]()
         self._context: list[ContextMessage] = []
         self._offset = 0
@@ -57,208 +54,98 @@ class Execution[T: Entity]:
 
         output_deque = deque[OutputMessage]()
         while input_deque:
-            event = input_deque.popleft()
-
-            # Initial request received
-            if isinstance(event, CreateEntityRequestReceived):
-                if event.offset < self._offset:
+            message = input_deque.popleft()
+            if isinstance(message, REQUEST_RECEIVED):
+                if message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
 
-                execution = greenlet(getattr(type(self.subject), "__init__"))
-                self._initiators[execution] = event
-                self._context.append(event)
+                if isinstance(message, CreateEntityRequestReceived):
+                    method = getattr(type(self.subject), "__init__")
+                elif isinstance(message, EntityMethodRequestReceived):
+                    method = getattr(type(self.subject), message.method_name)
+                else:
+                    assert_never(message)
+
+                execution = greenlet(method)
+
+                self._requests[execution] = message
+                self._context.append(message)
+                self._offset = message.offset + 1
                 output_deque.extend(
                     self._continue(
                         execution,
                         functools.partial(
                             execution.switch,
                             self.subject,
-                            *event.args,
-                            **event.kwargs,
+                            *message.args,
+                            **message.kwargs,
                         ),
                     )
                 )
-            elif isinstance(event, EntityMethodRequestReceived):
-                if event.offset < self._offset:
+            elif isinstance(message, RESPONSE_RECEIVED):
+                if message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
 
-                execution = greenlet(getattr(type(self.subject), event.method_name))
-                self._initiators[execution] = event
-                self._context.append(event)
+                execution = self._greenlets.pop(message.request_offset)
+
+                self._context.append(message)
+                self._offset = message.offset + 1
                 output_deque.extend(
                     self._continue(
                         execution,
                         functools.partial(
                             execution.switch,
-                            self.subject,
-                            *event.args,
-                            **event.kwargs,
+                            message.response,
                         ),
                     )
                 )
-
-            # Response received
-            elif isinstance(event, CreateEntityResponseReceived):
-                if event.offset < self._offset:
+            elif isinstance(message, ERROR_RECEIVED):
+                if message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
 
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
-                output_deque.extend(
-                    self._continue(
-                        execution,
-                        functools.partial(
-                            execution.switch,
-                            event.entity,
-                        ),
+                if isinstance(message, ServiceMethodErrorReceived):
+                    exception = message.exception
+                else:
+                    exception = message.error_type(*message.args, **message.kwargs)
+                    self._errors[exception] = _ErrorArguments(
+                        message.error_type,
+                        message.args,
+                        message.kwargs,
                     )
-                )
-            elif isinstance(event, EntityMethodResponseReceived):
-                if event.offset < self._offset:
-                    raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
 
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
-                output_deque.extend(
-                    self._continue(
-                        execution,
-                        functools.partial(
-                            execution.switch,
-                            event.response,
-                        ),
-                    )
-                )
-            elif isinstance(event, ServiceMethodResponseReceived):
-                if event.offset < self._offset:
-                    raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
+                execution = self._greenlets.pop(message.request_offset)
 
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
-                output_deque.extend(
-                    self._continue(
-                        execution,
-                        functools.partial(
-                            execution.switch,
-                            event.response,
-                        ),
-                    )
-                )
-            elif isinstance(event, EntityMethodErrorReceived):
-                if event.offset < self._offset:
-                    raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
-
-                error = event.error_type(*event.args, **event.kwargs)
-                self._errors[error] = _ErrorArguments(
-                    event.error_type,
-                    event.args,
-                    event.kwargs,
-                )
-
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
+                self._context.append(message)
+                self._offset = message.offset + 1
                 output_deque.extend(
                     self._continue(
                         execution,
                         functools.partial(
                             execution.throw,
-                            event.error_type,
-                            error,
+                            type(exception),
+                            exception,
                         ),
                     )
                 )
-            elif isinstance(event, ServiceMethodErrorReceived):
-                if event.offset < self._offset:
-                    raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
-
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
-                output_deque.extend(
-                    self._continue(
-                        execution,
-                        functools.partial(
-                            execution.throw,
-                            type(event.exception),
-                            event.exception,
-                        ),
-                    )
-                )
-            elif isinstance(event, CreateEntityErrorReceived):
-                if event.offset < self._offset:
-                    raise NotImplementedError("Unordered offsets")
-                self._offset = event.offset + 1
-
-                error = event.error_type(*event.args, **event.kwargs)
-                self._errors[error] = _ErrorArguments(
-                    event.error_type,
-                    event.args,
-                    event.kwargs,
-                )
-
-                execution = self._greenlets.pop(event.request_offset)
-                self._context.append(event)
-                output_deque.extend(
-                    self._continue(
-                        execution,
-                        functools.partial(
-                            execution.throw,
-                            event.error_type,
-                            error,
-                        ),
-                    )
-                )
-
-            # Request sent
-            elif isinstance(event, CreateEntityRequestSent):
-                if event != output_deque.popleft():
+            elif (
+                isinstance(message, REQUEST_SENT)  #
+                or isinstance(message, RESPONSE_SENT)
+            ):
+                if message != output_deque.popleft():
                     raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-            elif isinstance(event, EntityMethodRequestSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-            elif isinstance(event, ServiceMethodRequestSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-
-            # Response sent
-            elif isinstance(event, CreateEntityResponseSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-            elif isinstance(event, CreateEntityErrorSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-            elif isinstance(event, EntityMethodResponseSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-            elif isinstance(event, EntityMethodErrorSent):
-                if event != output_deque.popleft():
-                    raise NotImplementedError("Inconsistent execution context")
-                self._context.append(event)
-
-            # State changed
-            elif isinstance(event, EntityStateChanged):
+                self._context.append(message)
+            elif isinstance(message, EntityStateChanged):
                 if output_deque:
-                    if event != output_deque.popleft():
+                    if message != output_deque.popleft():
                         raise NotImplementedError("Inconsistent execution context")
-                elif event.offset < self._offset:
+                elif message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
-                getattr(self.subject, "__setstate__")(event.state)
-                self._context.append(event)
-                self._offset = event.offset + 1
+                getattr(self.subject, "__setstate__")(message.state)
+                self._context.append(message)
+                self._offset = message.offset + 1
 
             else:
-                assert_never(event)
+                assert_never(message)
 
         self._context.extend(output_deque)
         return list(output_deque)
@@ -281,9 +168,9 @@ class Execution[T: Entity]:
         # Gather responses received within processed requests
         for message in self._context:
             if (
-                isinstance(message, RESPONSE_RECEIVED)
-                and message.request_offset in processed_offsets
-            ):
+                isinstance(message, RESPONSE_RECEIVED)  #
+                or isinstance(message, ERROR_RECEIVED)
+            ) and message.request_offset in processed_offsets:
                 processed_offsets.add(message.offset)
 
         # Gather consecutive state changed
@@ -315,7 +202,7 @@ class Execution[T: Entity]:
         execution: greenlet,
         switch_to_execution: Callable[[], Any],
     ) -> list[OutputMessage]:
-        initiator = self._initiators[execution]
+        initiator = self._requests[execution]
 
         try:
             with Execution._intercept_interaction(self, initiator.offset):
@@ -357,7 +244,7 @@ class Execution[T: Entity]:
             self._greenlets[interception.offset] = execution
             return [interception]
 
-        del self._initiators[execution]
+        del self._requests[execution]
         if isinstance(initiator, CreateEntityRequestReceived):
             return [
                 CreateEntityResponseSent(
