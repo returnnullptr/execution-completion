@@ -169,8 +169,10 @@ REQUEST_RECEIVED = (
 )
 RESPONSE_SENT = (
     CreateEntityResponseSent,
-    CreateEntityErrorSent,
     EntityMethodResponseSent,
+)
+ERROR_SENT = (
+    CreateEntityErrorSent,
     EntityMethodErrorSent,
 )
 REQUEST_SENT = (

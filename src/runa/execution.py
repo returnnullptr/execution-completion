@@ -10,6 +10,7 @@ from greenlet import greenlet
 
 from runa.context import (
     ERROR_RECEIVED,
+    ERROR_SENT,
     REQUEST_RECEIVED,
     REQUEST_SENT,
     RESPONSE_RECEIVED,
@@ -141,8 +142,9 @@ class Execution[Subject: Entity]:
                     )
                 )
             elif (
-                isinstance(message, REQUEST_SENT)  #
+                isinstance(message, REQUEST_SENT)
                 or isinstance(message, RESPONSE_SENT)
+                or isinstance(message, ERROR_SENT)
             ):
                 # TODO: Reset execution state and raise custom error
                 if message != output_messages.popleft():
@@ -169,9 +171,9 @@ class Execution[Subject: Entity]:
     def cleanup(self) -> list[ContextMessage]:
         processed_offsets = set[int]()
 
-        # Gather responses sent, their requests and requests sent during processing
+        # Gather responses and errors sent, their initiator messages and requests sent during processing
         for message in reversed(self._context):
-            if isinstance(message, RESPONSE_SENT):
+            if isinstance(message, RESPONSE_SENT) or isinstance(message, ERROR_SENT):
                 processed_offsets.add(message.request_offset)
                 processed_offsets.add(message.offset)
             elif (
@@ -180,7 +182,7 @@ class Execution[Subject: Entity]:
             ):
                 processed_offsets.add(message.offset)
 
-        # Gather responses and errors received within processed requests
+        # Gather responses and errors received within processed messages
         for message in self._context:
             if (
                 isinstance(message, RESPONSE_RECEIVED)  #
