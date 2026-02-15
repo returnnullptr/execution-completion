@@ -330,7 +330,7 @@ def test_create_entity_error_received_then_entity_method_error_sent() -> None:
             offset=3,
             request_offset=2,
             error_type=BrokenProduct,
-            args=("Box",),
+            args=("Pencil",),
             kwargs={"reason": "Bad things happen"},
         ),
     ]
@@ -342,7 +342,7 @@ def test_create_entity_error_received_then_entity_method_error_sent() -> None:
             offset=4,
             request_offset=1,
             error_type=BrokenProduct,
-            args=("Box",),
+            args=("Pencil",),
             kwargs={"reason": "Bad things happen"},
         ),
         EntityStateChanged(
@@ -361,7 +361,7 @@ def test_create_entity_error_received_then_entity_method_error_sent() -> None:
             offset=4,
             request_offset=1,
             error_type=BrokenProduct,
-            args=("Box",),
+            args=("Pencil",),
             kwargs={"reason": "Bad things happen"},
         ),
     ]
