@@ -46,15 +46,23 @@ class Execution[T: Entity]:
         return self._context.copy()
 
     def complete(self, messages: Iterable[ContextMessage]) -> list[OutputMessage]:
-        input_deque = deque(messages)
-        for cached_message in self._context:
-            if not input_deque or input_deque.popleft() != cached_message:
+        input_iterator = iter(messages)
+        for message in self._context:
+            try:
+                if message != next(input_iterator):
+                    raise NotImplementedError("Cache miss")
+            except StopIteration:
                 raise NotImplementedError("Cache miss")
-            self._offset = cached_message.offset + 1
+
+            self._offset = message.offset + 1
 
         output_deque = deque[OutputMessage]()
-        while input_deque:
-            message = input_deque.popleft()
+        while True:
+            try:
+                message = next(input_iterator)
+            except StopIteration:
+                break
+
             if isinstance(message, REQUEST_RECEIVED):
                 if message.offset < self._offset:
                     raise NotImplementedError("Unordered offsets")
