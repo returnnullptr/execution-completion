@@ -318,7 +318,7 @@ class Execution[T: Entity]:
         initiator = self._initiators[execution]
 
         try:
-            with Execution._intercept_interaction(self, self.subject, initiator.offset):
+            with Execution._intercept_interaction(self, initiator.offset):
                 interception = switch_to_execution()
         except Error as ex:
             try:
@@ -387,13 +387,12 @@ class Execution[T: Entity]:
     @contextmanager
     def _intercept_interaction(
         self,
-        subject: Entity,
         trace_offset: int,
     ) -> Generator[None, None, None]:
         with (
             Execution._intercept_create_entity(self, trace_offset),
-            Execution._intercept_send_entity_request(self, subject, trace_offset),
-            Execution._intercept_send_service_request(self, subject, trace_offset),
+            Execution._intercept_send_entity_request(self, trace_offset),
+            Execution._intercept_send_service_request(self, trace_offset),
             Execution._intercept_entity_error(self),
             # TODO: Protect entity state
         ):
@@ -435,13 +434,12 @@ class Execution[T: Entity]:
     @contextmanager
     def _intercept_send_entity_request(
         self,
-        subject: Entity,
         trace_offset: int,
     ) -> Generator[None, None, None]:
         main_greenlet = greenlet.getcurrent()
 
         def getattribute(entity: Entity, name: str) -> Any:
-            if entity is subject:
+            if entity is self.subject:
                 return original_getattribute(entity, name)
 
             if name.startswith("_"):
@@ -476,7 +474,6 @@ class Execution[T: Entity]:
     @contextmanager
     def _intercept_send_service_request(
         self,
-        subject: Entity,
         trace_offset: int,
     ) -> Generator[None, None, None]:
         main_greenlet = greenlet.getcurrent()
@@ -506,14 +503,16 @@ class Execution[T: Entity]:
             return functools.partial(method, service)
 
         proxies: list[tuple[str, _ServiceProxy]] = []
-        for attr_name, annotation in inspect.get_annotations(type(subject)).items():
+        for attr_name, annotation in inspect.get_annotations(
+            type(self.subject)
+        ).items():
             if issubclass(annotation, Service):
                 proxy = _ServiceProxy()
                 proxy.__class__ = annotation
                 proxies.append((attr_name, proxy))
 
         for attr_name, service_proxy in proxies:
-            setattr(subject, attr_name, service_proxy)
+            setattr(self.subject, attr_name, service_proxy)
 
         original_getattribute = Service.__getattribute__
         setattr(Service, "__getattribute__", getattribute)
@@ -521,7 +520,7 @@ class Execution[T: Entity]:
             yield
         finally:
             for attr_name, _ in proxies:
-                delattr(subject, attr_name)
+                delattr(self.subject, attr_name)
             setattr(Entity, "__getattribute__", original_getattribute)
 
     @contextmanager
