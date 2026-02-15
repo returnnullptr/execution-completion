@@ -60,12 +60,7 @@ class Execution[Subject: Entity]:
 
         # TODO: Wrap with try-except and reset execution state in case of error
         output_messages = deque[OutputMessage]()
-        while True:
-            try:
-                message = next(input_iterator)
-            except StopIteration:
-                break
-
+        for message in input_iterator:
             if isinstance(message, REQUEST_RECEIVED):
                 # TODO: Reset execution state and raise custom error
                 if message.offset < self._offset:
