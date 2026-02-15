@@ -69,7 +69,7 @@ class Execution[Subject: Entity]:
                 if isinstance(message, CreateEntityRequestReceived):
                     method = getattr(type(self.subject), "__init__")
                 elif isinstance(message, EntityMethodRequestReceived):
-                    if not message.method in vars(type(self.subject)).values():
+                    if message.method not in vars(type(self.subject)).values():
                         # TODO: Test this behavior
                         raise NotImplementedError("Undefined entity method")
                     method = message.method
