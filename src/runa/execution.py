@@ -295,7 +295,7 @@ class Execution[Subject: Entity]:
             Execution._intercept_send_entity_request(self, trace_offset),
             Execution._intercept_send_service_request(self, trace_offset),
             Execution._intercept_entity_error(self),
-            # TODO: Protect entity state from modifying by another entity
+            Execution._protect_entity_private_state(self),
         ):
             yield
 
@@ -445,6 +445,21 @@ class Execution[Subject: Entity]:
             yield
         finally:
             setattr(Error, "__new__", original_new)
+
+    @contextmanager
+    def _protect_entity_private_state(self) -> Generator[None, None, None]:
+        def set_attribute(entity: Entity, name: str, value: Any) -> None:
+            if entity is self.subject:
+                return original_set_attr(entity, name, value)
+
+            raise AttributeError("Entity state is private")
+
+        original_set_attr = Entity.__setattr__
+        setattr(Entity, "__setattr__", set_attribute)
+        try:
+            yield
+        finally:
+            setattr(Entity, "__setattr__", original_set_attr)
 
     def _next_offset(self) -> int:
         offset = self._offset
