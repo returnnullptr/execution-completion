@@ -16,7 +16,7 @@ Execution completion model
 ## Rules
 
 - [x] An entity can access and modify its own state.
-- [ ] An entity cannot access or modify another entity's state.
+- [x] An entity cannot access or modify another entity's state.
 - [x] An entity interacts with other entities or services only through messages.
 - [x] An entity receives messages in the same order they were produced.
 - [x] An entity or service processes every message it receives.
