@@ -344,7 +344,6 @@ class Execution[Subject: Entity]:
                 return original_getattribute(entity, name)
 
             if name.startswith("_"):
-                # TODO: Test this behavior
                 raise AttributeError("Entity state is private")
 
             try:
