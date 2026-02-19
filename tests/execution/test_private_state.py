@@ -1,7 +1,7 @@
 import pytest
 
 from runa import Execution
-from runa.context import ContextMessage, EntityStateChanged, EntityMethodRequestReceived
+from runa.context import ContextMessage, EntityMethodRequestReceived, EntityStateChanged
 from runa.model import Entity
 
 
