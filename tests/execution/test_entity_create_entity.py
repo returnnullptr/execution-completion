@@ -1,3 +1,5 @@
+import pytest
+
 from runa import Execution
 from runa.context import (
     ContextMessage,
@@ -49,6 +51,9 @@ class Factory(Entity):
         product = Product(name=product_name)
         self.products.append(product)
         return product
+
+    def instantiate_base_entity(self) -> Entity:
+        return Entity()
 
 
 def test_create_entity_request_received_then_create_entity_request_sent() -> None:
@@ -371,3 +376,25 @@ def test_create_entity_error_received_then_entity_method_error_sent() -> None:
             state=[box],
         ),
     ]
+
+
+def test_instantiate_base_entity_then_type_error() -> None:
+    execution = Execution(Factory)
+    box = Product("Box")
+    input_messages: list[ContextMessage] = [
+        EntityStateChanged(
+            offset=0,
+            state=[box],
+        ),
+        EntityMethodRequestReceived(
+            offset=1,
+            method=Factory.instantiate_base_entity,
+            args=(),
+            kwargs={},
+        ),
+    ]
+
+    with pytest.raises(TypeError) as exc_info:
+        execution.complete(input_messages)
+
+    assert str(exc_info.value) == "Base 'Entity' class cannot be instantiated"

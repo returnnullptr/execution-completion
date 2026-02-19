@@ -312,6 +312,9 @@ class Execution[Subject: Entity]:
         main_greenlet = greenlet.getcurrent()
 
         def patched_new(cls: type[Entity], *args: Any, **kwargs: Any) -> Entity:
+            if cls is Entity:
+                return not_patched_new(cls, *args, **kwargs)
+
             entity: Entity = main_greenlet.switch(
                 CreateEntityRequestSent(
                     offset=self._next_offset(),
