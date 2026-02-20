@@ -1,27 +1,125 @@
 # Execution completion
 
-## Glossary
+Execution completion is a way of executing domain model logic, inspired by chat completion.
 
-- **Entity** is a domain object defined primarily by its unique identity.
-- **Entity state** is mutable data that can change without affecting the entity's identity.
-- **Service** is an external system or infrastructure that entities can interact with.
-- **Request** is a message sent to an entity or service, expecting a response.
-- **Response** is a message sent by an entity or service in reply to a request.
-- **Event** is a message that reflects an occurrence within the domain and is published without specifying its recipients.
-- **Error** is a message that indicates a failure or problem occurred while processing another message.
-- **Execution context** is the current state of an entity along with the set of messages it is currently processing, including any messages sent or received during that processing.
+During inference, an LLM cannot cause side effects, but it can stop with the intention of calling a tool.
 
-## Rules
+The same can be done for the domain model. Let's imagine, that the domain model cannot cause side effects, but it can pause execution with the intention of requesting another entity or external service.
 
-- [x] An entity can access and modify its own state.
-- [x] An entity cannot access or modify another entity's state.
-- [x] An entity interacts with other entities or services only through messages.
-- [x] An entity receives messages in the same order they were produced.
-- [x] An entity or service processes every message it receives.
-- [x] An entity or service replies to every request it receives.
-- [x] An entity can send requests to other entities or services.
-- [x] An entity can create other entities.
-- [x] An entity receives a response for every request it sends.
-- [ ] An entity can publish events.
-- [x] Processing can be suspended until a response is received.
-- [x] An execution context can be saved and restored during processing.
+For example, the domain model consists of regular classes and synchronous methods:
+```python
+@dataclass
+class SenderState:
+    receiver: Receiver
+
+
+class Sender(Entity):
+    def __init__(self, receiver: Receiver) -> None:
+        self.receiver = receiver
+
+    def __getstate__(self) -> SenderState:
+        return SenderState(self.receiver)
+
+    def __setstate__(self, state: SenderState) -> None:
+        self.receiver = state.receiver
+
+    def send(self, message: str) -> str:
+        return self.receiver.receive(message)
+
+
+@dataclass
+class ReceiverState:
+    messages: list[str]
+
+
+class Receiver(Entity):
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def __getstate__(self) -> ReceiverState:
+        return ReceiverState(self.messages)
+
+    def __setstate__(self, state: ReceiverState) -> None:
+        self.messages = state.messages
+
+    def receive(self, message: str) -> str:
+        self.messages.append(message)
+        return f"Received: {message!r}"
+```
+
+The `Execution` accepts input messages and produces output messages, even if the execution is suspended.
+
+```python
+execution = Execution(Sender)
+receiver = Receiver()
+
+input_messages: list[ContextMessage] = [
+    EntityStateChanged(
+        offset=2,
+        state=SenderState(receiver),
+    ),
+    EntityMethodRequestReceived(
+        offset=3,
+        method=Sender.send,
+        args=("Hello!",),
+        kwargs={},
+    ),
+]
+
+output_messages = execution.complete(input_messages)
+
+assert output_messages == [
+    EntityMethodRequestSent(
+        offset=4,
+        trace_offset=3,
+        receiver=receiver,
+        method=Receiver.receive,
+        args=("Hello!",),
+        kwargs={},
+    ),
+]
+```
+
+The execution can be resumed when the result is available:
+
+```python
+input_messages: list[ContextMessage] = [
+    EntityStateChanged(
+        offset=2,
+        state=SenderState(receiver),
+    ),
+    EntityMethodRequestReceived(
+        offset=3,
+        method=Sender.send,
+        args=("Hello!",),
+        kwargs={},
+    ),
+    EntityMethodRequestSent(
+        offset=4,
+        trace_offset=3,
+        receiver=receiver,
+        method=Receiver.receive,
+        args=("Hello!",),
+        kwargs={},
+    ),
+    EntityMethodResponseReceived(
+        offset=5,
+        request_offset=4,
+        response=receiver.receive("Hello!"),
+    ),
+]
+
+output_messages = execution.complete(input_messages)
+
+assert output_messages == [
+    EntityMethodResponseSent(
+        offset=6,
+        request_offset=3,
+        response="Received: 'Hello!'",
+    ),
+    EntityStateChanged(
+        offset=7,
+        state=SenderState(receiver),
+    ),
+]
+```
